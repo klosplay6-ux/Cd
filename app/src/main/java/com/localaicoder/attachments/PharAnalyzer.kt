@@ -126,7 +126,7 @@ class PharAnalyzer {
                 if (extension in TEXT_EXTENSIONS && entry.uncompressedSize <= MAX_TEXT_PER_ENTRY) {
                     val compressed = readBytes(raf, contentOffset, entry.compressedSize.toInt())
                     val body = decodeContent(compressed, entry.flags, entry.uncompressedSize.toInt())
-                    if (body != null && body.none { it.code == 0 }) {
+                    if (body != null && body.none { it.toInt() == 0 }) {
                         textFiles += TextFile(entry.path, body.toString(Charsets.UTF_8))
                     }
                 }
@@ -162,7 +162,7 @@ class PharAnalyzer {
                 val extension = name.substringAfterLast('.', "").lowercase()
                 if (!directory && extension in TEXT_EXTENSIONS && size <= MAX_TEXT_PER_ENTRY) {
                     val body = readBytes(raf, offset + TAR_BLOCK, size.toInt()).toString(Charsets.UTF_8)
-                    if (body.none { it.code == 0 }) textFiles += TextFile(name, body)
+                    if (body.none { it.toInt() == 0 }) textFiles += TextFile(name, body)
                 }
                 offset += TAR_BLOCK + ((size + TAR_BLOCK - 1) / TAR_BLOCK) * TAR_BLOCK
             }
