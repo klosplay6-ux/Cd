@@ -128,6 +128,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         if (last?.role == Role.ASSISTANT) s.copy(messages = s.messages.dropLast(1) + last.copy(text = answer)) else s
                     }
                 }
+                if (answer.isBlank()) {
+                    _state.update { s ->
+                        val last = s.messages.lastOrNull()
+                        if (last?.role == Role.ASSISTANT) {
+                            s.copy(messages = s.messages.dropLast(1) + last.copy(text = "Yanıt üretimi durduruldu."))
+                        } else s
+                    }
+                }
             } catch (error: Exception) {
                 answer = "Yerel inference hatası: ${error.message ?: "bilinmeyen hata"}"
                 _state.update { s -> s.copy(messages = s.messages.dropLast(1) + ChatMessage(role = Role.SYSTEM_NOTICE, text = answer)) }
