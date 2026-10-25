@@ -93,15 +93,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val ready = snapshot.pending.filter { it.status == AttachmentStatus.READY }
-        val prompt = buildString {
-            append(snapshot.input.trim())
-            if (ready.isNotEmpty()) append("\n\nEklenen dosyalar: ${ready.joinToString { it.name }}")
-        }.trim()
         val userMsg = ChatMessage(role = Role.USER, text = snapshot.input.trim(), attachments = ready)
         _state.update { it.copy(input = "", pending = emptyList(), busy = true, messages = it.messages + userMsg + ChatMessage(role = Role.ASSISTANT, text = ""), status = "Yanıt üretiliyor…") }
         viewModelScope.launch {
             var answer = ""
             try {
+                val attachmentContext = ready.joinToString("\n") { attachment ->
+                    val content = attachmentManager.readForPrompt(attachment)
+                    "--- ${attachment.name} ---\n$content"
+                }
+                val prompt = buildString {
+                    append(snapshot.input.trim())
+                    if (attachmentContext.isNotBlank()) {
+                        append("\n\nAşağıdaki ek dosyaların gerçek içeriğini incele. Dosyaları çalıştırma; cevapta dosya adını ve mümkünse satırları belirt:\n")
+                        append(attachmentContext)
+                    }
+                }.trim()
                 engine.sendUserPrompt(prompt, 1024).collect { token ->
                     answer += token
                     _state.update { s ->

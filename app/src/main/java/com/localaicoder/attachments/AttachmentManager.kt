@@ -6,6 +6,9 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.util.zip.ZipInputStream
 import java.util.UUID
 
 /**
@@ -73,6 +76,56 @@ class AttachmentManager(private val context: Context) {
         } catch (e: Exception) {
             base.copy(status = AttachmentStatus.ERROR, error = "Okuma hatası: ${e.message ?: e.javaClass.simpleName}")
         }
+    }
+
+    /** Reads safe source/text content for the model prompt; attachments are never executed. */
+    suspend fun readForPrompt(attachment: Attachment): String = withContext(Dispatchers.IO) {
+        if (attachment.status != AttachmentStatus.READY) return@withContext ""
+        val resolver = context.contentResolver
+        when (attachment.kind) {
+            AttachmentKind.SOURCE, AttachmentKind.CONFIG, AttachmentKind.TEXT ->
+                resolver.openInputStream(attachment.uri)?.use { readUtf8Limited(it, MAX_PROMPT_FILE_CHARS) } ?: ""
+            AttachmentKind.ZIP, AttachmentKind.PHAR ->
+                resolver.openInputStream(attachment.uri)?.use { input ->
+                    ZipInputStream(input).use { zip ->
+                        buildString {
+                            var entry = zip.nextEntry
+                            var total = 0
+                            while (entry != null && total < MAX_ARCHIVE_PROMPT_CHARS) {
+                                val name = entry.name
+                                val ext = FileTypes.extensionOf(name)
+                                val safe = !entry.isDirectory && !name.contains("..") && !name.startsWith("/")
+                                if (safe && ext in (FileTypes.source + FileTypes.config + FileTypes.text)) {
+                                    val body = readUtf8Limited(zip, MAX_ARCHIVE_ENTRY_CHARS)
+                                    append("\n--- ").append(name).append(" ---\n").append(body).append('\n')
+                                    total += body.length
+                                }
+                                zip.closeEntry()
+                                entry = zip.nextEntry
+                            }
+                        }
+                    }
+                } ?: ""
+            else -> ""
+        }
+    }
+
+    private fun readUtf8Limited(input: InputStream, limit: Int): String {
+        val bytes = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (bytes.size() < limit) {
+            val count = input.read(buffer, 0, minOf(buffer.size, limit - bytes.size()))
+            if (count <= 0) break
+            if (buffer.take(count).any { it == 0.toByte() }) return "[ikili dosya atlandı]"
+            bytes.write(buffer, 0, count)
+        }
+        return String(bytes.toByteArray(), Charsets.UTF_8)
+    }
+
+    private companion object {
+        const val MAX_PROMPT_FILE_CHARS = 40_000
+        const val MAX_ARCHIVE_ENTRY_CHARS = 20_000
+        const val MAX_ARCHIVE_PROMPT_CHARS = 120_000
     }
 
     private fun queryNameAndSize(resolver: ContentResolver, uri: Uri): Pair<String, Long> {
