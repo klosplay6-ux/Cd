@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "com.localaicoder"
     compileSdk = 34
+    ndkVersion = "26.3.11579264"
 
     defaultConfig {
         applicationId = "com.localaicoder"
@@ -16,6 +17,20 @@ android {
 
         ndk {
             abiFilters += listOf("arm64-v8a")
+        }
+
+        externalNativeBuild {
+            cmake {
+                arguments += "-DCMAKE_BUILD_TYPE=Release"
+                arguments += "-DBUILD_SHARED_LIBS=ON"
+                arguments += "-DLLAMA_BUILD_APP=OFF"
+                arguments += "-DLLAMA_BUILD_COMMON=ON"
+                arguments += "-DLLAMA_OPENSSL=OFF"
+                arguments += "-DGGML_NATIVE=OFF"
+                arguments += "-DGGML_OPENMP=OFF"
+                arguments += "-DGGML_LLAMAFILE=OFF"
+                arguments += "-DGGML_BACKEND_DL=ON"
+            }
         }
     }
 
@@ -39,6 +54,12 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"

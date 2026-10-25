@@ -5,9 +5,12 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.localaicoder.attachments.Attachment
+import com.localaicoder.attachments.AttachmentKind
 import com.localaicoder.attachments.AttachmentManager
 import com.localaicoder.attachments.AttachmentStatus
-import com.localaicoder.attachments.AttachmentKind
+import com.localaicoder.inference.AiChat
+import com.localaicoder.inference.InferenceEngine
+import com.localaicoder.inference.ModelManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,31 +20,27 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-enum class Role { USER, SYSTEM_NOTICE }
+enum class Role { USER, ASSISTANT, SYSTEM_NOTICE }
 
-data class ChatMessage(
-    val id: String = UUID.randomUUID().toString(),
-    val role: Role,
-    val text: String,
-    val attachments: List<Attachment> = emptyList()
-)
+data class ChatMessage(val id: String = UUID.randomUUID().toString(), val role: Role, val text: String, val attachments: List<Attachment> = emptyList())
 
 data class ChatUiState(
     val input: String = "",
     val pending: List<Attachment> = emptyList(),
     val messages: List<ChatMessage> = emptyList(),
-    /** Aşama 2'de ModelManager'a bağlanacak; şu an hiçbir model yüklü değil. */
-    val loadedModelName: String? = null
+    val models: List<ModelManager.ImportedModel> = emptyList(),
+    val loadedModelName: String? = null,
+    val status: String? = null,
+    val busy: Boolean = false
 ) {
-    val canSend: Boolean
-        get() = (input.isNotBlank() || pending.any { it.status == AttachmentStatus.READY }) &&
-            pending.none { it.status == AttachmentStatus.PROCESSING }
+    val canSend: Boolean get() = (input.isNotBlank() || pending.any { it.status == AttachmentStatus.READY }) && pending.none { it.status == AttachmentStatus.PROCESSING } && !busy
 }
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
-
     private val attachmentManager = AttachmentManager(app)
-    private val _state = MutableStateFlow(ChatUiState())
+    private val modelManager = ModelManager(app)
+    private val engine: InferenceEngine by lazy { AiChat.getInferenceEngine(app) }
+    private val _state = MutableStateFlow(ChatUiState(models = modelManager.list()))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
 
     fun onInputChange(text: String) = _state.update { it.copy(input = text) }
@@ -51,40 +50,72 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val already = _state.value.pending.map { it.uri }.toSet()
         val fresh = uris.filter { it !in already }
         viewModelScope.launch {
-            // Önce "işleniyor" kartlarını göster, sonra sonuçla değiştir.
-            val placeholders = fresh.map { uri ->
-                Attachment(
-                    id = UUID.randomUUID().toString(), uri = uri,
-                    name = uri.lastPathSegment?.substringAfterLast('/') ?: "dosya",
-                    extension = "", kind = AttachmentKind.UNKNOWN, sizeBytes = -1,
-                    status = AttachmentStatus.PROCESSING
-                )
-            }
+            val placeholders = fresh.map { uri -> Attachment(UUID.randomUUID().toString(), uri, uri.lastPathSegment?.substringAfterLast('/') ?: "dosya", "", AttachmentKind.UNKNOWN, -1, AttachmentStatus.PROCESSING) }
             _state.update { it.copy(pending = it.pending + placeholders) }
             val results = fresh.map { async { attachmentManager.inspect(it) } }.awaitAll()
-            _state.update { s ->
-                val ph = placeholders.map { it.id }.toSet()
-                s.copy(pending = s.pending.filter { it.id !in ph } + results)
+            val ids = placeholders.map { it.id }.toSet()
+            _state.update { s -> s.copy(pending = s.pending.filterNot { it.id in ids } + results) }
+        }
+    }
+
+    fun importModel(uri: Uri) {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, status = "GGUF model kopyalanıyor…") }
+            try {
+                val imported = modelManager.importModel(uri)
+                _state.update { it.copy(models = modelManager.list(), busy = false, status = "Model hazır: ${imported.name}") }
+                loadModel(imported)
+            } catch (error: Exception) {
+                _state.update { it.copy(busy = false, status = "Model eklenemedi: ${error.message}") }
             }
         }
     }
 
-    fun removeAttachment(id: String) =
-        _state.update { s -> s.copy(pending = s.pending.filterNot { it.id == id }) }
-
-    fun send() {
-        val s = _state.value
-        if (!s.canSend) return
-        val ready = s.pending.filter { it.status == AttachmentStatus.READY }
-        val userMsg = ChatMessage(role = Role.USER, text = s.input.trim(), attachments = ready)
-        val notice = if (s.loadedModelName == null) listOf(
-            ChatMessage(
-                role = Role.SYSTEM_NOTICE,
-                text = "Yanıt üretilemedi: yüklü bir GGUF modeli yok. Yerel çıkarım motoru ve model yöneticisi Aşama 2'de eklenecek."
-            )
-        ) else emptyList()
-        _state.update {
-            it.copy(input = "", pending = emptyList(), messages = it.messages + userMsg + notice)
+    fun loadModel(model: ModelManager.ImportedModel) {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, status = "${model.name} yükleniyor…") }
+            try {
+                engine.loadModel(model.path)
+                engine.setSystemPrompt("Sen cihazda tamamen yerel çalışan, güvenilir bir kodlama asistanısın. Bilmediğin API'leri uydurma.")
+                _state.update { it.copy(busy = false, loadedModelName = model.name, status = "Model hazır") }
+            } catch (error: Exception) {
+                _state.update { it.copy(busy = false, status = "Model yüklenemedi: ${error.message ?: "uyumsuz veya bozuk GGUF"}") }
+            }
         }
     }
+
+    fun removeAttachment(id: String) = _state.update { s -> s.copy(pending = s.pending.filterNot { it.id == id }) }
+
+    fun send() {
+        val snapshot = _state.value
+        if (!snapshot.canSend || snapshot.loadedModelName == null) {
+            if (snapshot.loadedModelName == null) _state.update { it.copy(status = "Önce + menüsünden bir GGUF model ekleyin.") }
+            return
+        }
+        val ready = snapshot.pending.filter { it.status == AttachmentStatus.READY }
+        val prompt = buildString {
+            append(snapshot.input.trim())
+            if (ready.isNotEmpty()) append("\n\nEklenen dosyalar: ${ready.joinToString { it.name }}")
+        }.trim()
+        val userMsg = ChatMessage(role = Role.USER, text = snapshot.input.trim(), attachments = ready)
+        _state.update { it.copy(input = "", pending = emptyList(), busy = true, messages = it.messages + userMsg + ChatMessage(role = Role.ASSISTANT, text = ""), status = "Yanıt üretiliyor…") }
+        viewModelScope.launch {
+            var answer = ""
+            try {
+                engine.sendUserPrompt(prompt, 1024).collect { token ->
+                    answer += token
+                    _state.update { s ->
+                        val last = s.messages.lastOrNull()
+                        if (last?.role == Role.ASSISTANT) s.copy(messages = s.messages.dropLast(1) + last.copy(text = answer)) else s
+                    }
+                }
+            } catch (error: Exception) {
+                answer = "Yerel inference hatası: ${error.message ?: "bilinmeyen hata"}"
+                _state.update { s -> s.copy(messages = s.messages.dropLast(1) + ChatMessage(role = Role.SYSTEM_NOTICE, text = answer)) }
+            }
+            _state.update { it.copy(busy = false, status = "Hazır") }
+        }
+    }
+
+    override fun onCleared() { runCatching { engine.destroy() }; super.onCleared() }
 }
