@@ -2,6 +2,7 @@
 #include <jni.h>
 #include <iomanip>
 #include <cmath>
+#include <atomic>
 #include <string>
 #include <unistd.h>
 #include "sampling.h"
@@ -25,7 +26,7 @@ static std::string join(const std::vector<T> &values, const std::string &delim) 
  * LLama resources: context, model, batch and sampler
  */
 constexpr int   N_THREADS_MIN           = 2;
-constexpr int   N_THREADS_MAX           = 4;
+constexpr int   N_THREADS_MAX           = 8;
 constexpr int   N_THREADS_HEADROOM      = 2;
 
 // 4096 is safer for 3B-class quantized models on phones with limited RAM.
@@ -39,6 +40,7 @@ static llama_context                    * g_context;
 static common_batch                       g_batch;
 static common_chat_templates_ptr          g_chat_templates;
 static common_sampler                   * g_sampler;
+static std::atomic_bool                   g_stop_requested{false};
 
 extern "C"
 JNIEXPORT void JNICALL
@@ -337,6 +339,8 @@ static int decode_tokens_in_batches(
             shift_context();
         }
 
+        if (g_stop_requested.load()) return 3;
+
         // Add tokens to the batch with proper positions
         for (int j = 0; j < cur_batch_size; j++) {
             const llama_token token_id = tokens[i + j];
@@ -412,6 +416,7 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_processUserPrompt(
         jstring juser_prompt,
         jint n_predict
 ) {
+    g_stop_requested.store(false);
     // Reset short-term states
     reset_short_term_states();
 
@@ -494,6 +499,7 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_generateNextToken(
         JNIEnv *env,
         jobject /*unused*/
 ) {
+    if (g_stop_requested.load()) return nullptr;
     // Infinite text generation via context shifting
     if (current_position >= DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM) {
         LOGw("%s: Context full! Shifting...", __func__);
@@ -561,6 +567,12 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_unload(JNIEnv * /*u
     g_batch = common_batch();
     llama_free(g_context);
     llama_model_free(g_model);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_localaicoder_inference_internal_InferenceEngineImpl_requestStop(JNIEnv *, jobject /*unused*/) {
+    g_stop_requested.store(true);
 }
 
 extern "C"

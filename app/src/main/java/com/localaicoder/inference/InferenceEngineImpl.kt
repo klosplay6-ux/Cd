@@ -104,6 +104,9 @@ internal class InferenceEngineImpl private constructor(
     private external fun generateNextToken(): String?
 
     @FastNative
+    private external fun requestStop()
+
+    @FastNative
     private external fun unload()
 
     @FastNative
@@ -235,6 +238,7 @@ internal class InferenceEngineImpl private constructor(
             processUserPrompt(message, predictLength).let { result ->
                 if (result != 0) {
                     Log.e(TAG, "Failed to process user prompt: $result")
+                    if (_cancelGeneration) _state.value = InferenceEngine.State.ModelReady
                     return@flow
                 }
             }
@@ -265,6 +269,7 @@ internal class InferenceEngineImpl private constructor(
 
     override fun stopGeneration() {
         _cancelGeneration = true
+        runCatching { requestStop() }
     }
 
     /**

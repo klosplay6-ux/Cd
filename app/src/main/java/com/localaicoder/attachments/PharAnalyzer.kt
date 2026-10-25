@@ -316,8 +316,8 @@ class PharAnalyzer {
             }
             var used = 0
             textFiles.forEach { file ->
-                if (used >= 120_000) return@forEach
-                val content = file.content.take(120_000 - used)
+                if (used >= 24_000) return@forEach
+                val content = file.content.take(24_000 - used)
                 append("\n--- ").append(file.path).append(" ---\n").append(content).append('\n')
                 used += content.length
             }
