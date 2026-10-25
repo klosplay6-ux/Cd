@@ -165,11 +165,14 @@ internal class InferenceEngineImpl private constructor(
                 _readyForSystemPrompt = false
                 _state.value = InferenceEngine.State.LoadingModel
                 load(pathToModel).let {
-                    // TODO-han.yin: find a better way to pass other error codes
-                    if (it != 0) throw UnsupportedArchitectureException()
+                    if (it != 0) throw IOException(
+                        "llama.cpp GGUF modelini yükleyemedi. Dosya bozuk/uyumsuz olabilir veya cihaz belleği yetersiz olabilir."
+                    )
                 }
                 prepare().let {
-                    if (it != 0) throw IOException("Failed to prepare resources")
+                    if (it != 0) throw IOException(
+                        "Model belleğe alınamadı. Daha küçük quantization veya daha düşük context kullanan bir model deneyin."
+                    )
                 }
                 Log.i(TAG, "Model loaded!")
                 _readyForSystemPrompt = true
