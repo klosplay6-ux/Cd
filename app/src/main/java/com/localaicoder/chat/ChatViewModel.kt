@@ -103,7 +103,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         val ready = snapshot.pending.filter { it.status == AttachmentStatus.READY }
         val userMsg = ChatMessage(role = Role.USER, text = snapshot.input.trim(), attachments = ready)
-        _state.update { it.copy(input = "", pending = emptyList(), busy = true, generating = true, messages = it.messages + userMsg + ChatMessage(role = Role.ASSISTANT, text = ""), status = "Yanıt üretiliyor…") }
+        _state.update { it.copy(input = "", pending = emptyList(), busy = true, generating = false, messages = it.messages + userMsg + ChatMessage(role = Role.ASSISTANT, text = ""), status = "Ekler hazırlanıyor…") }
         viewModelScope.launch {
             var answer = ""
             try {
@@ -121,6 +121,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         append(attachmentContext)
                     }
                 }.trim()
+                _state.update { it.copy(generating = true, status = "Yanıt üretiliyor…") }
                 engine.sendUserPrompt(prompt, 0).collect { token ->
                     answer += token
                     _state.update { s ->

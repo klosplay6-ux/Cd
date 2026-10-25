@@ -316,6 +316,7 @@ static std::string cached_token_chars;
 static std::ostringstream assistant_ss;
 
 static void reset_short_term_states() {
+    g_stop_requested.store(false);
     stop_generation_position = 0;
     cached_token_chars.clear();
     assistant_ss.str("");
