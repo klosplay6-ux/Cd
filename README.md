@@ -34,7 +34,7 @@ Sohbet ekranındaki `+` menüsünden **GGUF model ekle** seçilir. Dosya SAF üz
 
 llama.cpp, MIT lisanslı resmi Git alt modülü olarak sabit bir commit’e pinlenmiştir. Android arm64-v8a build’i için OpenMP, OpenSSL ve llamafile kapalıdır; CPU backend’i cihazın desteklediği özelliklere göre çalışır.
 
-PHAR ekleri çalıştırılmadan tar arşivi olarak okunur. Dosya ağacı ve güvenli metin kaynakları (PHP, `plugin.yml`, YAML/JSON ve benzeri) model bağlamına eklenir; mutlak yollar, `..` içeren yollar, aşırı boyut ve aşırı giriş sayısı reddedilir.
+PHAR ekleri çalıştırılmadan PHP'nin native manifest biçimi veya tar tabanlı arşiv olarak okunur. Dosya ağacı ve güvenli metin kaynakları (PHP, `plugin.yml`, YAML/JSON ve benzeri) model bağlamına eklenir; mutlak yollar, `..` içeren yollar, aşırı boyut ve aşırı giriş sayısı reddedilir. Native PHAR içindeki zlib sıkıştırmalı dosyalar açılır; bzip2 girdileri desteklenmiyorsa açıkça reddedilir.
 
 ## Dosya erişimi
 
