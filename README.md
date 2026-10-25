@@ -8,11 +8,11 @@ Android'de tamamen yerel çalışan GGUF/llama.cpp tabanlı kodlama asistanı (P
 |---|---|
 | 1. Proje iskeleti, Material 3 UI, SAF dosya seçici, aktif "+" menüsü, ek kartları | Tamamlandı |
 | 2. llama.cpp + JNI + gerçek inference | Uygulandı; cihazda doğrulama gerekiyor |
-| 3. PHAR/ZIP analiz motoru | Bekliyor |
+| 3. PHAR/ZIP analiz motoru | PHAR tar analizi ve güvenli prompt bağlamı uygulandı; ZIP sertleştirmesi devam ediyor |
 | 4. Bağlam yönetimi | Bekliyor |
 | 5. Testler, export, release APK | Bekliyor |
 
-Not: Uygulama artık resmi llama.cpp Android binding yaklaşımıyla gerçek GGUF yükleme ve token akışlı yerel inference kullanır. Model yoksa sahte yanıt üretmez.
+Not: Uygulama artık resmi llama.cpp Android binding yaklaşımıyla gerçek GGUF yükleme ve token akışlı yerel inference kullanır. Model yoksa sahte yanıt üretmez. Yanıt üretimi sırasında gönderme düğmesi durdurma düğmesine dönüşür ve kısmi yanıt korunur.
 
 ## Derleme
 
@@ -33,6 +33,8 @@ Not: Uygulama artık resmi llama.cpp Android binding yaklaşımıyla gerçek GGU
 Sohbet ekranındaki `+` menüsünden **GGUF model ekle** seçilir. Dosya SAF üzerinden okunur, `.gguf` uzantısı ve `GGUF` magic değeri doğrulanır, ardından uygulamanın özel `filesDir/models` dizinine kopyalanır. Model, llama.cpp JNI katmanı ile yüklenir; desteklenmeyen mimari veya bozuk model kullanıcıya hata olarak gösterilir. Yanıtlar native inference motorundan token token akışla gelir.
 
 llama.cpp, MIT lisanslı resmi Git alt modülü olarak sabit bir commit’e pinlenmiştir. Android arm64-v8a build’i için OpenMP, OpenSSL ve llamafile kapalıdır; CPU backend’i cihazın desteklediği özelliklere göre çalışır.
+
+PHAR ekleri çalıştırılmadan tar arşivi olarak okunur. Dosya ağacı ve güvenli metin kaynakları (PHP, `plugin.yml`, YAML/JSON ve benzeri) model bağlamına eklenir; mutlak yollar, `..` içeren yollar, aşırı boyut ve aşırı giriş sayısı reddedilir.
 
 ## Dosya erişimi
 

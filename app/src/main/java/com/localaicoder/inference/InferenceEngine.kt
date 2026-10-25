@@ -30,6 +30,9 @@ interface InferenceEngine {
      */
     fun sendUserPrompt(message: String, predictLength: Int = DEFAULT_PREDICT_LENGTH): Flow<String>
 
+    /** Requests the current token generation loop to stop at the next safe point. */
+    fun stopGeneration()
+
     /**
      * Runs a benchmark with the specified parameters.
      */

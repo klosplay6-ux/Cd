@@ -71,6 +71,14 @@ class AttachmentManager(private val context: Context) {
             when (kind) {
                 AttachmentKind.ZIP -> if (!(head.size >= 4 && head[0] == 'P'.code.toByte() && head[1] == 'K'.code.toByte()))
                     return@withContext base.copy(status = AttachmentStatus.ERROR, error = "Geçerli bir ZIP imzası bulunamadı (bozuk olabilir).")
+                AttachmentKind.PHAR -> {
+                    try {
+                        resolver.openInputStream(uri)?.use { PharAnalyzer.analyze(it) }
+                            ?: return@withContext base.copy(status = AttachmentStatus.ERROR, error = "PHAR dosyası açılamadı.")
+                    } catch (e: Exception) {
+                        return@withContext base.copy(status = AttachmentStatus.ERROR, error = e.message ?: "PHAR analizi başarısız.")
+                    }
+                }
                 AttachmentKind.SOURCE, AttachmentKind.CONFIG, AttachmentKind.TEXT -> if (head.any { it == 0.toByte() })
                     return@withContext base.copy(status = AttachmentStatus.ERROR, error = "Dosya ikili görünüyor; metin olarak okunmadı.")
                 else -> Unit
@@ -88,7 +96,9 @@ class AttachmentManager(private val context: Context) {
         when (attachment.kind) {
             AttachmentKind.SOURCE, AttachmentKind.CONFIG, AttachmentKind.TEXT ->
                 resolver.openInputStream(attachment.uri)?.use { readUtf8Limited(it, MAX_PROMPT_FILE_CHARS) } ?: ""
-            AttachmentKind.ZIP, AttachmentKind.PHAR ->
+            AttachmentKind.PHAR ->
+                resolver.openInputStream(attachment.uri)?.use { PharAnalyzer.analyze(it).asPrompt() } ?: ""
+            AttachmentKind.ZIP ->
                 resolver.openInputStream(attachment.uri)?.use { input ->
                     ZipInputStream(input).use { zip ->
                         buildString {

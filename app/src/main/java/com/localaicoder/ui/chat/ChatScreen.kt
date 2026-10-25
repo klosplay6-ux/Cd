@@ -12,6 +12,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -65,13 +66,20 @@ fun ChatScreen(vm: ChatViewModel = viewModel()) {
                         DropdownMenuItem(text = { Text("Dosya ekle") }, onClick = { menuOpen = false; single.launch(arrayOf("*/*")) })
                         DropdownMenuItem(text = { Text("Birden fazla dosya seç") }, onClick = { menuOpen = false; multi.launch(arrayOf("*/*")) })
                         DropdownMenuItem(text = { Text("ZIP arşivi ekle") }, onClick = { menuOpen = false; single.launch(arrayOf("application/zip", "application/x-zip-compressed")) })
+                        DropdownMenuItem(text = { Text("PHAR plugin ekle") }, onClick = { menuOpen = false; single.launch(arrayOf("application/octet-stream", "application/x-php", "*/*")) })
                         DropdownMenuItem(text = { Text("Kod dosyası ekle") }, onClick = { menuOpen = false; multi.launch(CODE_MIME) })
                     }
                 }
                 Spacer(Modifier.width(8.dp))
                 OutlinedTextField(value = state.input, onValueChange = vm::onInputChange, modifier = Modifier.weight(1f), placeholder = { Text("Mesaj yazın…") }, maxLines = 5)
                 Spacer(Modifier.width(8.dp))
-                FilledIconButton(onClick = vm::send, enabled = state.canSend) { Icon(Icons.AutoMirrored.Filled.Send, "Gönder") }
+                FilledIconButton(
+                    onClick = if (state.generating) vm::stopGeneration else vm::send,
+                    enabled = state.generating || state.canSend
+                ) {
+                    if (state.generating) Icon(Icons.Default.Stop, "Yanıtı durdur")
+                    else Icon(Icons.AutoMirrored.Filled.Send, "Gönder")
+                }
             }
         }
     }

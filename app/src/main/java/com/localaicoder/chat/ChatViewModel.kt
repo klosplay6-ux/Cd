@@ -31,7 +31,8 @@ data class ChatUiState(
     val models: List<ModelManager.ImportedModel> = emptyList(),
     val loadedModelName: String? = null,
     val status: String? = null,
-    val busy: Boolean = false
+    val busy: Boolean = false,
+    val generating: Boolean = false
 ) {
     val canSend: Boolean get() = (input.isNotBlank() || pending.any { it.status == AttachmentStatus.READY }) && pending.none { it.status == AttachmentStatus.PROCESSING } && !busy
 }
@@ -86,6 +87,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun removeAttachment(id: String) = _state.update { s -> s.copy(pending = s.pending.filterNot { it.id == id }) }
 
+    /** Stops the native token loop without discarding the partial assistant response. */
+    fun stopGeneration() {
+        if (_state.value.generating) {
+            engine.stopGeneration()
+            _state.update { it.copy(status = "Yanıt durduruluyor…") }
+        }
+    }
+
     fun send() {
         val snapshot = _state.value
         if (!snapshot.canSend || snapshot.loadedModelName == null) {
@@ -94,7 +103,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         val ready = snapshot.pending.filter { it.status == AttachmentStatus.READY }
         val userMsg = ChatMessage(role = Role.USER, text = snapshot.input.trim(), attachments = ready)
-        _state.update { it.copy(input = "", pending = emptyList(), busy = true, messages = it.messages + userMsg + ChatMessage(role = Role.ASSISTANT, text = ""), status = "Yanıt üretiliyor…") }
+        _state.update { it.copy(input = "", pending = emptyList(), busy = true, generating = true, messages = it.messages + userMsg + ChatMessage(role = Role.ASSISTANT, text = ""), status = "Yanıt üretiliyor…") }
         viewModelScope.launch {
             var answer = ""
             try {
@@ -123,7 +132,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 answer = "Yerel inference hatası: ${error.message ?: "bilinmeyen hata"}"
                 _state.update { s -> s.copy(messages = s.messages.dropLast(1) + ChatMessage(role = Role.SYSTEM_NOTICE, text = answer)) }
             }
-            _state.update { it.copy(busy = false, status = "Hazır") }
+            _state.update { it.copy(busy = false, generating = false, status = "Hazır") }
         }
     }
 
