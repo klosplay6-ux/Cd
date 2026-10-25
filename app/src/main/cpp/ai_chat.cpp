@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <cmath>
 #include <atomic>
+#include <limits>
 #include <string>
 #include <unistd.h>
 #include "sampling.h"
@@ -455,7 +456,9 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_processUserPrompt(
 
     // Update position
     current_position += user_prompt_size;
-    stop_generation_position = current_position + user_prompt_size + n_predict;
+    stop_generation_position = n_predict <= 0
+            ? std::numeric_limits<llama_pos>::max()
+            : current_position + n_predict;
     return 0;
 }
 

@@ -12,7 +12,7 @@ Android'de tamamen yerel çalışan GGUF/llama.cpp tabanlı kodlama asistanı (P
 | 4. Bağlam yönetimi | Bekliyor |
 | 5. Testler, export, release APK | Bekliyor |
 
-Not: Uygulama artık resmi llama.cpp Android binding yaklaşımıyla gerçek GGUF yükleme ve token akışlı yerel inference kullanır. Model yoksa sahte yanıt üretmez. Yanıt üretimi sırasında gönderme düğmesi durdurma düğmesine dönüşür ve kısmi yanıt korunur.
+Not: Uygulama artık resmi llama.cpp Android binding yaklaşımıyla gerçek GGUF yükleme ve token akışlı yerel inference kullanır. Model yoksa sahte yanıt üretmez. Yanıt üretimi sırasında gönderme düğmesi durdurma düğmesine dönüşür ve kısmi yanıt korunur. Çıktı token sayısı sabit bir 512 sınırına bağlı değildir; üretim model EOG sinyali verene veya kullanıcı durdurana kadar sürer. Context dolduğunda eski tokenlar kaydırılır.
 
 ## Derleme
 

@@ -121,7 +121,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         append(attachmentContext)
                     }
                 }.trim()
-                engine.sendUserPrompt(prompt, 512).collect { token ->
+                engine.sendUserPrompt(prompt, 0).collect { token ->
                     answer += token
                     _state.update { s ->
                         val last = s.messages.lastOrNull()

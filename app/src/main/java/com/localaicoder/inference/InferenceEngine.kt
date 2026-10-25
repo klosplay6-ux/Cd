@@ -70,7 +70,8 @@ interface InferenceEngine {
     }
 
     companion object {
-        const val DEFAULT_PREDICT_LENGTH = 1024
+        /** 0 means generate until EOG or explicit user stop. */
+        const val DEFAULT_PREDICT_LENGTH = 0
     }
 }
 
