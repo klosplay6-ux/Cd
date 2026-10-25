@@ -98,9 +98,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             var answer = ""
             try {
-                val attachmentContext = ready.joinToString("\n") { attachment ->
-                    val content = attachmentManager.readForPrompt(attachment)
-                    "--- ${attachment.name} ---\n$content"
+                val attachmentContext = buildString {
+                    for (attachment in ready) {
+                        val content = attachmentManager.readForPrompt(attachment)
+                        append("--- ").append(attachment.name).append(" ---\n")
+                        append(content).append("\n")
+                    }
                 }
                 val prompt = buildString {
                     append(snapshot.input.trim())

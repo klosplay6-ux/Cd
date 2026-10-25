@@ -21,6 +21,9 @@ class AttachmentManager(private val context: Context) {
         const val MAX_TEXT_BYTES = 2L * 1024 * 1024        // metin/kod dosyası üst sınırı
         const val MAX_ARCHIVE_BYTES = 200L * 1024 * 1024   // zip/phar üst sınırı
         private const val SNIFF_BYTES = 4096
+        private const val MAX_PROMPT_FILE_CHARS = 40_000
+        private const val MAX_ARCHIVE_ENTRY_CHARS = 20_000
+        private const val MAX_ARCHIVE_PROMPT_CHARS = 120_000
     }
 
     suspend fun inspect(uri: Uri): Attachment = withContext(Dispatchers.IO) {
@@ -120,12 +123,6 @@ class AttachmentManager(private val context: Context) {
             bytes.write(buffer, 0, count)
         }
         return String(bytes.toByteArray(), Charsets.UTF_8)
-    }
-
-    private companion object {
-        const val MAX_PROMPT_FILE_CHARS = 40_000
-        const val MAX_ARCHIVE_ENTRY_CHARS = 20_000
-        const val MAX_ARCHIVE_PROMPT_CHARS = 120_000
     }
 
     private fun queryNameAndSize(resolver: ContentResolver, uri: Uri): Pair<String, Long> {
