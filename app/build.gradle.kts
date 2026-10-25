@@ -22,14 +22,14 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += "-DCMAKE_BUILD_TYPE=Release"
-                arguments += "-DBUILD_SHARED_LIBS=ON"
+                arguments += "-DBUILD_SHARED_LIBS=OFF"
                 arguments += "-DLLAMA_BUILD_APP=OFF"
                 arguments += "-DLLAMA_BUILD_COMMON=ON"
                 arguments += "-DLLAMA_OPENSSL=OFF"
                 arguments += "-DGGML_NATIVE=OFF"
                 arguments += "-DGGML_OPENMP=OFF"
                 arguments += "-DGGML_LLAMAFILE=OFF"
-                arguments += "-DGGML_BACKEND_DL=ON"
+                arguments += "-DGGML_BACKEND_DL=OFF"
             }
         }
     }

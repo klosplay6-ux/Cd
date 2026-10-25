@@ -61,6 +61,10 @@ extern "C"
 JNIEXPORT jint JNICALL
 Java_com_localaicoder_inference_internal_InferenceEngineImpl_load(JNIEnv *env, jobject, jstring jmodel_path) {
     llama_model_params model_params = llama_model_default_params();
+    // The portable Android build uses the statically linked CPU backend.
+    model_params.n_gpu_layers = 0;
+    model_params.load_mode = LLAMA_LOAD_MODE_MMAP;
+    model_params.lazy_mode = LLAMA_LAZY_MODE_OFF;
 
     const auto *model_path = env->GetStringUTFChars(jmodel_path, 0);
     LOGd("%s: Loading model from: \n%s\n", __func__, model_path);
