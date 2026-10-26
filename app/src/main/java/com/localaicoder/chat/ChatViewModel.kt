@@ -38,6 +38,10 @@ data class ChatUiState(
 }
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
+    private companion object {
+        const val MAX_GENERATION_TOKENS = 512
+    }
+
     private val attachmentManager = AttachmentManager(app)
     private val modelManager = ModelManager(app)
     private val engine: InferenceEngine by lazy { AiChat.getInferenceEngine(app) }
@@ -77,7 +81,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(busy = true, status = "${model.name} yükleniyor…") }
             try {
                 engine.loadModel(model.path)
-                engine.setSystemPrompt("Sen cihazda tamamen yerel çalışan, güvenilir bir kodlama asistanısın. Bilmediğin API'leri uydurma.")
+                engine.setSystemPrompt("Sen Türkçe yanıt veren, kısa ve güvenilir bir kodlama asistanısın. Yalnızca kullanıcının son isteğini yanıtla. İstenmedikçe API, bağlantı veya kaynak listesi üretme; önceki yanıtı tekrarlama. Emin değilsen bunu açıkça söyle ve API ya da kod uydurma.")
                 _state.update { it.copy(busy = false, loadedModelName = model.name, status = "Model hazır") }
             } catch (error: Exception) {
                 _state.update { it.copy(busy = false, status = "Model yüklenemedi: ${error.message ?: "uyumsuz veya bozuk GGUF"}") }
@@ -121,12 +125,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         append(attachmentContext)
                     }
                 }.trim()
-                _state.update { it.copy(generating = true, status = "Yanıt üretiliyor…") }
-                engine.sendUserPrompt(prompt, 0).collect { token ->
+                _state.update { it.copy(generating = true, status = "AI düşünüyor…") }
+                var lastProgressChars = 0
+                engine.sendUserPrompt(prompt, MAX_GENERATION_TOKENS).collect { token ->
                     answer += token
                     _state.update { s ->
                         val last = s.messages.lastOrNull()
-                        if (last?.role == Role.ASSISTANT) s.copy(messages = s.messages.dropLast(1) + last.copy(text = answer)) else s
+                        if (last?.role == Role.ASSISTANT) {
+                            val status = if (answer.length - lastProgressChars >= 128) {
+                                lastProgressChars = answer.length
+                                "Yanıt oluşturuyor… ${answer.length} karakter"
+                            } else s.status
+                            s.copy(messages = s.messages.dropLast(1) + last.copy(text = answer), status = status)
+                        } else s
                     }
                 }
                 if (answer.isBlank()) {

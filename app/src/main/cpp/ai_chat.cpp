@@ -3,6 +3,8 @@
 #include <iomanip>
 #include <cmath>
 #include <atomic>
+#include <algorithm>
+#include <cctype>
 #include <limits>
 #include <string>
 #include <unistd.h>
@@ -42,6 +44,8 @@ static common_batch                       g_batch;
 static common_chat_templates_ptr          g_chat_templates;
 static common_sampler                   * g_sampler;
 static std::atomic_bool                   g_stop_requested{false};
+static std::string                         g_model_path;
+static bool                                g_deepseek_coder_fallback{false};
 
 extern "C"
 JNIEXPORT void JNICALL
@@ -71,6 +75,7 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_load(JNIEnv *env, j
 
     const auto *model_path = env->GetStringUTFChars(jmodel_path, 0);
     LOGd("%s: Loading model from: \n%s\n", __func__, model_path);
+    g_model_path = model_path;
 
     auto *model = llama_model_load_from_file(model_path, model_params);
     env->ReleaseStringUTFChars(jmodel_path, model_path);
@@ -126,6 +131,19 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_prepare(JNIEnv * /*
     g_context = context;
     g_batch = common_batch(context);
     g_chat_templates = common_chat_templates_init(g_model, "");
+    g_deepseek_coder_fallback = false;
+    std::string model_name = g_model_path;
+    std::transform(model_name.begin(), model_name.end(), model_name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (!common_chat_templates_was_explicit(g_chat_templates.get()) &&
+        model_name.find("deepseek") != std::string::npos &&
+        model_name.find("coder") != std::string::npos) {
+        // DeepSeek Coder Instruct expects ### Instruction / ### Response, not the
+        // implicit ChatML fallback that llama.cpp uses when GGUF has no template.
+        g_chat_templates = common_chat_templates_init(g_model, "deepseek");
+        g_deepseek_coder_fallback = true;
+        LOGw("GGUF has no explicit chat template; using llama.cpp DeepSeek Coder format");
+    }
     g_sampler = new_sampler(DEFAULT_SAMPLER_TEMP);
     return 0;
 }
@@ -314,12 +332,14 @@ static std::string chat_add_and_format(const std::string &role, const std::strin
 static llama_pos stop_generation_position;
 static std::string cached_token_chars;
 static std::ostringstream assistant_ss;
+static bool assistant_turn_finalized;
 
 static void reset_short_term_states() {
     g_stop_requested.store(false);
     stop_generation_position = 0;
     cached_token_chars.clear();
     assistant_ss.str("");
+    assistant_turn_finalized = false;
 }
 
 static int decode_tokens_in_batches(
@@ -380,7 +400,10 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_processSystemPrompt
     // Format system prompt if applicable
     const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());
     if (has_chat_template) {
-        formatted_system_prompt = chat_add_and_format(ROLE_SYSTEM, system_prompt);
+        const std::string system_content = g_deepseek_coder_fallback
+                ? std::string(system_prompt) + "\n\n"
+                : std::string(system_prompt);
+        formatted_system_prompt = chat_add_and_format(ROLE_SYSTEM, system_content);
     }
     env->ReleaseStringUTFChars(jsystem_prompt, system_prompt);
 
@@ -534,7 +557,6 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_generateNextToken(
     // Stop if next token is EOG
     if (llama_vocab_is_eog(llama_model_get_vocab(g_model), new_token_id)) {
         LOGd("id: %d,\tIS EOG!\nSTOP.", new_token_id);
-        chat_add_and_format(ROLE_ASSISTANT, assistant_ss.str());
         return nullptr;
     }
 
@@ -555,6 +577,16 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_generateNextToken(
         result = env->NewStringUTF("");
     }
     return result;
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_localaicoder_inference_internal_InferenceEngineImpl_finishAssistantTurn(
+        JNIEnv * /*env*/, jobject /*unused*/) {
+    if (!assistant_turn_finalized) {
+        chat_add_and_format(ROLE_ASSISTANT, assistant_ss.str());
+        assistant_turn_finalized = true;
+    }
 }
 
 

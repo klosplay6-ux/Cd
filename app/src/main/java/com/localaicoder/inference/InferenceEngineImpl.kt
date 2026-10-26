@@ -104,6 +104,9 @@ internal class InferenceEngineImpl private constructor(
     private external fun generateNextToken(): String?
 
     @FastNative
+    private external fun finishAssistantTurn()
+
+    @FastNative
     private external fun requestStop()
 
     @FastNative
@@ -250,6 +253,8 @@ internal class InferenceEngineImpl private constructor(
                     if (utf8token.isNotEmpty()) emit(utf8token)
                 } ?: break
             }
+            // Keep native chat history aligned with the KV cache, including user-stopped turns.
+            finishAssistantTurn()
             if (_cancelGeneration) {
                 Log.i(TAG, "Assistant generation aborted per requested.")
             } else {
