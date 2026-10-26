@@ -285,6 +285,7 @@ constexpr const char *ROLE_ASSISTANT    = "assistant";
 static std::vector<common_chat_msg> chat_msgs;
 static llama_pos system_prompt_position;
 static llama_pos current_position;
+static llama_pos stop_generation_position;
 
 static void reset_long_term_states(const bool clear_kv_cache = true) {
     chat_msgs.clear();
@@ -305,10 +306,15 @@ static void reset_long_term_states(const bool clear_kv_cache = true) {
  */
 static void shift_context() {
     const int n_discard = (current_position - system_prompt_position) / 2;
+    if (n_discard <= 0) return;
     LOGi("%s: Discarding %d tokens", __func__, n_discard);
     llama_memory_seq_rm(llama_get_memory(g_context), 0, system_prompt_position, system_prompt_position + n_discard);
     llama_memory_seq_add(llama_get_memory(g_context), 0, system_prompt_position + n_discard, current_position, -n_discard);
     current_position -= n_discard;
+    if (stop_generation_position > current_position &&
+        stop_generation_position != std::numeric_limits<llama_pos>::max()) {
+        stop_generation_position -= n_discard;
+    }
     LOGi("%s: Context shifting done! Current position: %d", __func__, current_position);
 }
 
@@ -329,13 +335,12 @@ static std::string chat_add_and_format(const std::string &role, const std::strin
  * - token chars caching
  * - current assistant message being generated
  */
-static llama_pos stop_generation_position;
 static std::string cached_token_chars;
 static std::ostringstream assistant_ss;
 static bool assistant_turn_finalized;
 
-static void reset_short_term_states() {
-    g_stop_requested.store(false);
+static void reset_short_term_states(const bool clear_stop_request = true) {
+    if (clear_stop_request) g_stop_requested.store(false);
     stop_generation_position = 0;
     cached_token_chars.clear();
     assistant_ss.str("");
@@ -441,9 +446,8 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_processUserPrompt(
         jstring juser_prompt,
         jint n_predict
 ) {
-    g_stop_requested.store(false);
     // Reset short-term states
-    reset_short_term_states();
+    reset_short_term_states(false);
 
     // Obtain and tokenize user prompt
     const auto *const user_prompt = env->GetStringUTFChars(juser_prompt, nullptr);
@@ -463,17 +467,41 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_processUserPrompt(
         LOGv("token: `%s`\t -> `%d`", common_token_to_piece(g_context, id).c_str(), id);
     }
 
-    // Ensure user prompt doesn't exceed the context size by truncating if necessary.
-    const int user_prompt_size = (int) user_tokens.size();
-    const int max_batch_size = DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM;
-    if (user_prompt_size > max_batch_size) {
-        const int skipped_tokens = user_prompt_size - max_batch_size;
-        user_tokens.resize(max_batch_size);
+    // Free old conversation context first, then reserve space for the requested answer.
+    const llama_pos context_limit = DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM - 1;
+    const int generation_reserve = n_predict > 0
+            ? std::min<int>(n_predict, std::max<llama_pos>(0, context_limit - system_prompt_position - 1))
+            : 0;
+    while (current_position + (llama_pos) user_tokens.size() + generation_reserve > context_limit &&
+           current_position > system_prompt_position + 1) {
+        const llama_pos old_position = current_position;
+        shift_context();
+        if (current_position == old_position) break;
+    }
+    const llama_pos available_prompt_tokens = context_limit - current_position - generation_reserve;
+    if (available_prompt_tokens <= 0) {
+        LOGe("%s: No context available for user prompt", __func__);
+        if (!chat_msgs.empty() && chat_msgs.back().role == ROLE_USER) chat_msgs.pop_back();
+        return 1;
+    }
+    if ((llama_pos) user_tokens.size() > available_prompt_tokens) {
+        const int skipped_tokens = (int) user_tokens.size() - (int) available_prompt_tokens;
+        user_tokens.resize((size_t) available_prompt_tokens);
         LOGw("%s: User prompt too long! Skipped %d tokens!", __func__, skipped_tokens);
     }
+    const int user_prompt_size = (int) user_tokens.size();
 
     // Decode user tokens in batches
-    if (decode_tokens_in_batches(g_context, g_batch, user_tokens, current_position, true)) {
+    const llama_pos prompt_start_position = current_position;
+    const int decode_result = decode_tokens_in_batches(g_context, g_batch, user_tokens, prompt_start_position, true);
+    if (decode_result == 3) {
+        llama_memory_seq_rm(llama_get_memory(g_context), 0, prompt_start_position, -1);
+        if (!chat_msgs.empty() && chat_msgs.back().role == ROLE_USER) chat_msgs.pop_back();
+        return 3;
+    }
+    if (decode_result != 0) {
+        llama_memory_seq_rm(llama_get_memory(g_context), 0, prompt_start_position, -1);
+        if (!chat_msgs.empty() && chat_msgs.back().role == ROLE_USER) chat_msgs.pop_back();
         LOGe("%s: llama_decode() failed!", __func__);
         return 2;
     }
@@ -527,16 +555,16 @@ Java_com_localaicoder_inference_internal_InferenceEngineImpl_generateNextToken(
         jobject /*unused*/
 ) {
     if (g_stop_requested.load()) return nullptr;
-    // Infinite text generation via context shifting
-    if (current_position >= DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM) {
-        LOGw("%s: Context full! Shifting...", __func__);
-        shift_context();
-    }
-
     // Stop if reaching the marked position
     if (current_position >= stop_generation_position) {
         LOGw("%s: STOP: hitting stop position: %d", __func__, stop_generation_position);
         return nullptr;
+    }
+
+    // Infinite text generation via context shifting
+    if (current_position >= DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM) {
+        LOGw("%s: Context full! Shifting...", __func__);
+        shift_context();
     }
 
     // Sample next token
@@ -609,6 +637,12 @@ extern "C"
 JNIEXPORT void JNICALL
 Java_com_localaicoder_inference_internal_InferenceEngineImpl_requestStop(JNIEnv *, jobject /*unused*/) {
     g_stop_requested.store(true);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_localaicoder_inference_internal_InferenceEngineImpl_clearStopRequest(JNIEnv *, jobject /*unused*/) {
+    g_stop_requested.store(false);
 }
 
 extern "C"

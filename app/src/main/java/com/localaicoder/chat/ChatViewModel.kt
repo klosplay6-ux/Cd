@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 enum class Role { USER, ASSISTANT, SYSTEM_NOTICE }
@@ -47,6 +48,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val engine: InferenceEngine by lazy { AiChat.getInferenceEngine(app) }
     private val _state = MutableStateFlow(ChatUiState(models = modelManager.list()))
     val state: StateFlow<ChatUiState> = _state.asStateFlow()
+    @Volatile private var stopRequestedByUser = false
 
     fun onInputChange(text: String) = _state.update { it.copy(input = text) }
 
@@ -94,6 +96,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Stops the native token loop without discarding the partial assistant response. */
     fun stopGeneration() {
         if (_state.value.generating) {
+            stopRequestedByUser = true
             engine.stopGeneration()
             _state.update { it.copy(status = "Yanıt durduruluyor…") }
         }
@@ -105,11 +108,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             if (snapshot.loadedModelName == null) _state.update { it.copy(status = "Önce + menüsünden bir GGUF model ekleyin.") }
             return
         }
+        stopRequestedByUser = false
         val ready = snapshot.pending.filter { it.status == AttachmentStatus.READY }
         val userMsg = ChatMessage(role = Role.USER, text = snapshot.input.trim(), attachments = ready)
         _state.update { it.copy(input = "", pending = emptyList(), busy = true, generating = false, messages = it.messages + userMsg + ChatMessage(role = Role.ASSISTANT, text = ""), status = "Ekler hazırlanıyor…") }
         viewModelScope.launch {
             var answer = ""
+            var failed = false
             try {
                 val attachmentContext = buildString {
                     for (attachment in ready) {
@@ -125,34 +130,80 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         append(attachmentContext)
                     }
                 }.trim()
-                _state.update { it.copy(generating = true, status = "AI düşünüyor…") }
+                _state.update { it.copy(generating = false, status = "İstek modele aktarılıyor…") }
                 var lastProgressChars = 0
-                engine.sendUserPrompt(prompt, MAX_GENERATION_TOKENS).collect { token ->
-                    answer += token
-                    _state.update { s ->
-                        val last = s.messages.lastOrNull()
-                        if (last?.role == Role.ASSISTANT) {
-                            val status = if (answer.length - lastProgressChars >= 128) {
-                                lastProgressChars = answer.length
-                                "Yanıt oluşturuyor… ${answer.length} karakter"
-                            } else s.status
-                            s.copy(messages = s.messages.dropLast(1) + last.copy(text = answer), status = status)
-                        } else s
+                val thinkingStartedAt = System.currentTimeMillis()
+                val inferenceStateJob = launch {
+                    engine.state.collect { inferenceState ->
+                        when (inferenceState) {
+                            is InferenceEngine.State.ProcessingUserPrompt ->
+                                _state.update { it.copy(generating = true, status = "İstek modele aktarılıyor…") }
+                            is InferenceEngine.State.Generating ->
+                                _state.update { it.copy(generating = true, status = "AI yanıt üretiyor…") }
+                            else -> Unit
+                        }
                     }
+                }
+                val progressJob = launch {
+                    while (true) {
+                        delay(1_000)
+                        if (answer.isBlank()) {
+                            val seconds = (System.currentTimeMillis() - thinkingStartedAt) / 1_000
+                            _state.update { it.copy(status = "Model ilk yanıtı hazırlıyor… ${seconds} sn") }
+                        }
+                    }
+                }
+                try {
+                    engine.sendUserPrompt(prompt, MAX_GENERATION_TOKENS).collect { token ->
+                        answer += token
+                        _state.update { s ->
+                            val last = s.messages.lastOrNull()
+                            if (last?.role == Role.ASSISTANT) {
+                                val status = if (answer.length - lastProgressChars >= 128) {
+                                    lastProgressChars = answer.length
+                                    "Yanıt oluşturuyor… ${answer.length} karakter"
+                                } else s.status
+                                s.copy(messages = s.messages.dropLast(1) + last.copy(text = answer), status = status)
+                            } else s
+                        }
+                    }
+                } finally {
+                    inferenceStateJob.cancel()
+                    progressJob.cancel()
                 }
                 if (answer.isBlank()) {
                     _state.update { s ->
                         val last = s.messages.lastOrNull()
-                        if (last?.role == Role.ASSISTANT) {
-                            s.copy(messages = s.messages.dropLast(1) + last.copy(text = "Yanıt üretimi durduruldu."))
-                        } else s
+                        val messages = if (last?.role == Role.ASSISTANT && last.text.isBlank()) s.messages.dropLast(1) else s.messages
+                        if (stopRequestedByUser) {
+                            s.copy(messages = messages, status = "Yanıt durduruldu")
+                        } else {
+                            s.copy(
+                                messages = messages + ChatMessage(
+                                    role = Role.SYSTEM_NOTICE,
+                                    text = "Model boş yanıt döndürdü. Model/bağlam uyumunu kontrol edip yeniden deneyin."
+                                )
+                            )
+                        }
                     }
                 }
             } catch (error: Exception) {
+                failed = true
                 answer = "Yerel inference hatası: ${error.message ?: "bilinmeyen hata"}"
                 _state.update { s -> s.copy(messages = s.messages.dropLast(1) + ChatMessage(role = Role.SYSTEM_NOTICE, text = answer)) }
             }
-            _state.update { it.copy(busy = false, generating = false, status = "Hazır") }
+            _state.update {
+                it.copy(
+                    busy = false,
+                    generating = false,
+                    status = when {
+                        stopRequestedByUser -> "Yanıt durduruldu"
+                        failed -> "Hata; ayrıntı mesajda"
+                        answer.isBlank() -> "Model boş yanıt verdi"
+                        else -> "Hazır"
+                    }
+                )
+            }
         }
     }
 

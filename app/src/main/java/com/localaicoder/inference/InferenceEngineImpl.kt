@@ -24,6 +24,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 
+private class PromptProcessingException(message: String) : IOException(message)
+
 /**
  * JNI wrapper for the llama.cpp library providing Android-friendly access to large language models.
  *
@@ -108,6 +110,9 @@ internal class InferenceEngineImpl private constructor(
 
     @FastNative
     private external fun requestStop()
+
+    @FastNative
+    private external fun clearStopRequest()
 
     @FastNative
     private external fun unload()
@@ -235,14 +240,20 @@ internal class InferenceEngineImpl private constructor(
         try {
             Log.i(TAG, "Sending user prompt...")
             _cancelGeneration = false
+            clearStopRequest()
             _readyForSystemPrompt = false
             _state.value = InferenceEngine.State.ProcessingUserPrompt
 
             processUserPrompt(message, predictLength).let { result ->
-                if (result != 0) {
-                    Log.e(TAG, "Failed to process user prompt: $result")
+                if (result == 3) {
+                    Log.i(TAG, "User prompt processing cancelled.")
                     _state.value = InferenceEngine.State.ModelReady
                     return@flow
+                }
+                if (result != 0) {
+                    throw PromptProcessingException(
+                        "İstek modele aktarılamadı (kod $result). Dosya içeriği bağlam sınırını aşmış olabilir; daha küçük bir dosya deneyin."
+                    )
                 }
             }
 
@@ -267,7 +278,11 @@ internal class InferenceEngineImpl private constructor(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error during generation!", e)
-            _state.value = InferenceEngine.State.Error(e)
+            _state.value = if (e is PromptProcessingException) {
+                InferenceEngine.State.ModelReady
+            } else {
+                InferenceEngine.State.Error(e)
+            }
             throw e
         }
     }.flowOn(llamaDispatcher)
